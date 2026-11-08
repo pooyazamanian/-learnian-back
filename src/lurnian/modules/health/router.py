@@ -3,9 +3,15 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
+from fastapi.responses import JSONResponse
 
 from lurnian.core.config import Settings, get_settings
-from lurnian.modules.health.schemas import HealthResponse, RootResponse
+from lurnian.core.database import check_database_connection
+from lurnian.modules.health.schemas import (
+    HealthResponse,
+    ReadinessResponse,
+    RootResponse,
+)
 
 router = APIRouter(tags=["Health & Status"])
 
@@ -25,6 +31,40 @@ async def read_root(
         message=f"Welcome to {settings.app_name}",
         version=settings.app_version,
         docs_url="/docs",
+    )
+
+
+@router.get(
+    "/ready",
+    response_model=ReadinessResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": ReadinessResponse,
+            "description": "Database dependency is not reachable.",
+        }
+    },
+    summary="Readiness Check Endpoint",
+    description=(
+        "Check whether the service is ready to receive traffic, including "
+        "database connectivity."
+    ),
+)
+async def readiness_check(
+    database_ready: Annotated[bool, Depends(check_database_connection)],
+) -> JSONResponse:
+    """Return readiness status and database connectivity."""
+    payload = ReadinessResponse(
+        status="ready" if database_ready else "not_ready",
+        database="ok" if database_ready else "unavailable",
+    )
+    return JSONResponse(
+        status_code=(
+            status.HTTP_200_OK
+            if database_ready
+            else status.HTTP_503_SERVICE_UNAVAILABLE
+        ),
+        content=payload.model_dump(),
     )
 
 

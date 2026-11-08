@@ -23,6 +23,22 @@ class HealthResponse(BaseModel):
     )
 
 
+class ReadinessResponse(BaseModel):
+    """Schema representing database dependency readiness."""
+
+    status: str
+    database: str
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "status": "ready",
+                "database": "ok",
+            }
+        }
+    )
+
+
 class RootResponse(BaseModel):
     """Schema representing root endpoint response."""
 

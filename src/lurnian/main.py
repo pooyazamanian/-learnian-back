@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from lurnian.core.config import get_settings
+from lurnian.core.database import check_database_connection, dispose_db_engine
 from lurnian.core.logging import setup_logging
 from lurnian.modules.health import health_router
 
@@ -25,7 +26,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.app_version,
         settings.environment,
     )
+
+    # Startup is deliberately fail-open: an unavailable database must not crash
+    # the process (and restart-loop it), it only leaves the service not ready.
+    if not await check_database_connection():
+        logger.warning(
+            "Database is not reachable at startup; %s will serve health checks "
+            "but report not ready until connectivity is restored",
+            settings.app_name,
+        )
+
     yield
+
+    await dispose_db_engine()
     logger.info("Shutting down %s", settings.app_name)
 
 
