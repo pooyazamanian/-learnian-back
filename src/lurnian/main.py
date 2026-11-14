@@ -6,7 +6,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from lurnian.core.config import get_settings
+from lurnian.api.errors import register_error_handlers
+from lurnian.api.router import build_v1_router
+from lurnian.core.config import get_settings, validate_production_settings
 from lurnian.core.database import check_database_connection, dispose_db_engine
 from lurnian.core.logging import setup_logging
 from lurnian.modules.health import health_router
@@ -45,6 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_application() -> FastAPI:
     """Factory creating and configuring the FastAPI instance."""
     settings = get_settings()
+    validate_production_settings(settings)
 
     application = FastAPI(
         title=settings.app_name,
@@ -56,8 +59,10 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Register modules routers
+    register_error_handlers(application)
+
     application.include_router(health_router)
+    application.include_router(build_v1_router(), prefix=settings.api_v1_prefix)
 
     return application
 

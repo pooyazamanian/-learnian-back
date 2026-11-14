@@ -1,10 +1,15 @@
 """Application configuration using Pydantic Settings."""
 
 from functools import lru_cache
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Values that are only acceptable on a developer machine.
+DEFAULT_JWT_SECRET: Final = "dev-only-change-me"
+DEFAULT_OTP_PEPPER: Final = "dev-only-otp-pepper"
+MIN_SECRET_LENGTH: Final = 32
 
 
 class Settings(BaseSettings):
@@ -23,6 +28,31 @@ class Settings(BaseSettings):
 
     # Logging settings
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+    # Authentication settings
+    jwt_secret: SecretStr = SecretStr("dev-only-change-me")
+    jwt_issuer: str = "lurnian"
+    # Access tokens are short-lived because they cannot be revoked; the refresh
+    # token is the long-lived half and rotates on every use. A session can never
+    # outlive its refresh token, so the absolute cap is at least the refresh TTL.
+    access_token_ttl_minutes: int = 30
+    refresh_token_ttl_days: int = 365
+    session_absolute_ttl_days: int = 365
+
+    # Phone sign-in: one-time codes delivered by SMS.
+    default_phone_country_code: str = "98"
+    otp_length: int = 6
+    otp_ttl_seconds: int = 120
+    otp_max_attempts: int = 5
+    otp_resend_cooldown_seconds: int = 60
+    # Hourly ceilings stop a single number (or one address) from turning the
+    # endpoint into an SMS bomb and a cost amplifier.
+    otp_max_per_number_per_hour: int = 5
+    otp_max_per_ip_per_hour: int = 20
+    otp_pepper: SecretStr = SecretStr(DEFAULT_OTP_PEPPER)
+    # Development convenience only: echo the generated code in the response so
+    # the flow can be exercised without an SMS provider. Never enable live.
+    otp_expose_in_response: bool = False
 
     # Database settings
     database_url: SecretStr = SecretStr(
@@ -45,6 +75,33 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+
+def validate_production_settings(settings: Settings) -> None:
+    """Refuse to boot production with development-grade secrets or debug on.
+
+    A default secret is a full authentication bypass: anyone can mint a valid
+    access token. Failing at startup is the only safe behaviour.
+    """
+    if settings.environment != "production":
+        return
+
+    problems: list[str] = []
+    if settings.debug:
+        problems.append("DEBUG must be false")
+    if settings.jwt_secret.get_secret_value() == DEFAULT_JWT_SECRET:
+        problems.append("JWT_SECRET is the development default")
+    elif len(settings.jwt_secret.get_secret_value()) < MIN_SECRET_LENGTH:
+        problems.append(f"JWT_SECRET must be at least {MIN_SECRET_LENGTH} characters")
+    if settings.otp_pepper.get_secret_value() == DEFAULT_OTP_PEPPER:
+        problems.append("OTP_PEPPER is the development default")
+    elif len(settings.otp_pepper.get_secret_value()) < MIN_SECRET_LENGTH:
+        problems.append(f"OTP_PEPPER must be at least {MIN_SECRET_LENGTH} characters")
+    if settings.otp_expose_in_response:
+        problems.append("OTP_EXPOSE_IN_RESPONSE must be false")
+
+    if problems:
+        raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))
 
 
 @lru_cache

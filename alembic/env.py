@@ -16,12 +16,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import lurnian.models  # noqa: F401  (registers every table on Base.metadata)
 from lurnian.core.config import get_settings
 from lurnian.core.database import Base
-
-# Import every module's models here as they are added, so that autogenerate
-# sees the complete metadata, e.g.:
-#     from lurnian.modules.users import models as users_models  # noqa: F401
 
 config = context.config
 
