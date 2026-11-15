@@ -182,7 +182,22 @@ docs/
 | 7 | CORS | برای کلاینت وب لازم می‌شود؛ عمداً اضافه نشد چون دامنه هنوز مشخص نیست |
 | 8 | صفحه‌بندی سشن‌ها | `GET /sessions` بدون limit است؛ تعداد سشن هر کاربر عملاً کم است |
 
-## ۹. قدم بعدی
+## ۹. اجرا و زیرساخت (Docker)
+
+| # | مورد | جزئیات | وضعیت |
+| --- | --- | --- | --- |
+| 51 | اصلاح والیوم PG18 | mount در `/var/lib/postgresql`، والیوم جدید `pgdata18` | ✅ اجرا شد (PostgreSQL 18.7 healthy) |
+| 52 | Redis | `redis:8-alpine` با AOF، رمز، `maxmemory 256mb`، healthcheck | ✅ healthy |
+| 53 | Object storage | SeaweedFS با S3 API روی ۸۳۳۳ (جای MinIO که ایمیج عمومی‌اش بسته شد) | ✅ healthy، `s3=200` |
+| 54 | Mailpit | SMTP روی ۲۵۲۵ و UI روی ۸۰۲۶ (پورت ۱۰۲۵ در ویندوز رزرو بود) | ✅ healthy |
+| 55 | Dockerfile | نصب پکیج، اجرای non-root، همان ایمیج برای api و migrate | ✅ build و اجرا شد |
+| 56 | سرویس `migrate` | `alembic upgrade head` یک‌باره قبل از api | ✅ ۳۹ جدول ساخته شد |
+| 57 | سرویس `api` | depends_on سالم + healthcheck روی `/health` | ✅ healthy، `/ready` = ok |
+| 58 | `.dockerignore` | حذف `.env`، تست و کش از build context | ✅ |
+
+نکته: کانتینر قدیمی `lurnian-db` که با کانفیگ قبلی مانده بود حذف شد؛ والیوم قدیمی `lurnian-backend_lurnian_pgdata` دست‌نخورده باقی است.
+
+## ۱۰. قدم بعدی
 
 ⬜ وکب v1: جست‌وجو/افزودن کلمه، enroll، ساخت کارت
 ⬜ اجرا روی دیتابیس واقعی و تست جریان کامل ورود

@@ -1,3 +1,29 @@
+# Local/self-hosted stack for Lurnian backend.
+#
+# PostgreSQL 18 changed the on-disk layout: the image now keeps data in
+# /var/lib/postgresql/<major>/docker, so the volume must be mounted at
+# /var/lib/postgresql (NOT at .../data). Mounting the old path leaves the image
+# with data it cannot use and it refuses to start.
+#
+#   docker compose up -d          # db + redis + minio + mailpit + migrate + api
+#   docker compose logs -f api
+#   docker compose down           # keeps volumes
+#   docker compose down -v        # destroys all local data
+
+name: lurnian
+
+x-app-environment: &app-environment
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  DEBUG: ${DEBUG:-true}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  HOST: 0.0.0.0
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lurnian}:${POSTGRES_PASSWORD:-lurnian}@db:5432/${POSTGRES_DB:-lurnian}
+  JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+  JWT_ISSUER: ${JWT_ISSUER:-lurnian}
+  OTP_PEPPER: ${OTP_PEPPER:-dev-only-otp-pepper}
+  OTP_EXPOSE_IN_RESPONSE: ${OTP_EXPOSE_IN_RESPONSE:-true}
+  DEFAULT_PHONE_COUNTRY_CODE: ${DEFAULT_PHONE_COUNTRY_CODE:-98}
+
 services:
   db:
     image: postgres:18-alpine
@@ -9,16 +35,144 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-lurnian}
       TZ: UTC
       PGTZ: UTC
+    command:
+      - postgres
+      - -c
+      - timezone=UTC
+      - -c
+      - max_connections=100
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - wal_compression=on
+      - -c
+      - log_min_duration_statement=500
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - lurnian_pgdata:/var/lib/postgresql/data
+      # PostgreSQL 18 layout: the cluster lives one level below this path.
+      - pgdata18:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
+
+  redis:
+    image: redis:8-alpine
+    container_name: lurnian-redis
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-lurnian}
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - ${REDIS_PASSWORD:-lurnian}
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # S3-compatible object storage for avatars/audio (columns are `*_object_key`).
+  # MinIO no longer publishes anonymous images, so SeaweedFS is used; it speaks
+  # the S3 API on 8333 and buckets are created on first write.
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    container_name: lurnian-seaweedfs
+    restart: unless-stopped
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.port=8333
+      - -master.volumeSizeLimitMB=1024
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - seaweeddata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8333/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: lurnian-mailpit
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      # 1025 sits inside a Windows excluded port range on some machines, so the
+      # host side uses 2525 while the container still listens on 1025.
+      - "127.0.0.1:2525:1025"
+      - "127.0.0.1:8026:8025"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lurnian-migrate
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lurnian-api
+    restart: unless-stopped
+    environment: *app-environment
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request
+          urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
 volumes:
-  lurnian_pgdata:
+  pgdata18:
+  redisdata:
+  seaweeddata:

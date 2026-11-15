@@ -145,7 +145,8 @@ class SessionService:
                 id=row.id,
                 current=row.id == current_session_id,
                 auth_method=row.auth_method.value,
-                ip=row.ip,
+                # INET comes back as an ipaddress object; the API speaks strings.
+                ip=str(row.ip) if row.ip is not None else None,
                 user_agent=row.user_agent,
                 created_at=row.created_at,
                 last_seen_at=row.last_seen_at,

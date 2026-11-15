@@ -6,6 +6,7 @@ against in-memory adapters: no PostgreSQL, no HTTP, no mocking library.
 
 from __future__ import annotations
 
+import ipaddress
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -594,3 +595,23 @@ async def test_codes_are_capped_per_address_and_hour() -> None:
     with pytest.raises(RateLimitedError) as caught:
         await harness.auth.request_code(phone="09120000002", request_ip="203.0.113.7")
     assert caught.value.code == "auth.code_limit_reached"
+
+
+async def test_session_listing_renders_inet_addresses_as_strings() -> None:
+    """PostgreSQL INET returns an ipaddress object; the API contract is a string."""
+    harness = build_harness()
+    issued = await harness.auth.request_code(phone=PHONE, request_ip=None)
+    login = await harness.auth.verify_code(
+        challenge_id=issued.challenge_id,
+        code=issued.debug_code or "",
+        request_ip="203.0.113.7",
+        user_agent=None,
+    )
+    harness.session_rows.sessions[login.tokens.session_id].ip = ipaddress.IPv4Address(
+        "203.0.113.7"
+    )
+
+    listed = await harness.sessions.list_sessions(
+        user_id=login.user.id, current_session_id=login.tokens.session_id
+    )
+    assert listed[0].ip == "203.0.113.7"

@@ -175,10 +175,14 @@ class SqlSessionRepository:
         self._session = session
 
     async def add_session(self, session: UserSession) -> None:
-        self._session.add(session)
+        self._session.add(session)        # Flush now: the refresh token references this row and there is no ORM
+        # relationship telling SQLAlchemy to order the two INSERTs. Without the
+        # flush the token can be written first and hit the FK violation.
+        await self._session.flush()
 
     async def add_refresh_token(self, token: RefreshToken) -> None:
         self._session.add(token)
+        await self._session.flush()
 
     async def refresh_token_by_hash(
         self, token_hash: bytes, *, for_update: bool = False
